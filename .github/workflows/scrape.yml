@@ -9,6 +9,11 @@ name: Scrape brands
 #                       private app repo only
 #   DATABASE_URL        Supabase pooled connection string
 #   DIRECT_URL          Supabase direct connection string
+# Optional:
+#   SCRAPE_PROXY_PREFIX geo-proxy prefix so Khaadi (which redirects US
+#                       datacenter IPs away) can be scraped via the API's
+#                       Mumbai region. Value:
+#                       https://saleshubpk.vercel.app/api/fetch?secret=<CRON_SECRET>&url=
 #
 # NOTE: this repo is public, which means these workflow LOGS are public.
 # GitHub automatically masks registered secret values in logs, which is why
@@ -67,3 +72,4 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          SCRAPE_PROXY_PREFIX: ${{ secrets.SCRAPE_PROXY_PREFIX }}
