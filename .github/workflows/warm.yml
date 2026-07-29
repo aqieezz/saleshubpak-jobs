@@ -1,0 +1,38 @@
+name: Keep API warm
+
+# Pings the live API so Vercel keeps a warm serverless instance and the edge
+# cache stays populated. Without this the first visitor after an idle period
+# waits 3 to 7 seconds while a fresh instance boots and Prisma opens a new
+# database connection (measured in production).
+#
+# Needs no code and no secrets: it is only public GET requests. Safe to run
+# frequently here because public repos have unlimited Actions minutes.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *" # every 5 minutes
+  workflow_dispatch: {}
+
+concurrency:
+  group: warm
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping the hot endpoints
+        run: |
+          BASE="https://saleshubpak.vercel.app"
+          # These are the exact URLs the app and website request, so the edge
+          # cache entries warmed here are the ones real users hit.
+          for path in \
+            "/api/home" \
+            "/api/products?sort=discount&gender=women&onSale=true&page=1&pageSize=20" \
+            "/api/products?sort=discount&onSale=true&page=1&pageSize=20" \
+            "/home" \
+            "/deals" ; do
+            curl -sS -m 25 -o /dev/null \
+              -w "%{http_code} %{time_total}s  $path\n" "$BASE$path" || true
+          done
