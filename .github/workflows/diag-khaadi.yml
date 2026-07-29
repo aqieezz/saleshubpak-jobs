@@ -4,20 +4,16 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch Khaadi sale grid from a datacenter IP
+      - name: Trace Khaadi redirect from datacenter IP
         run: |
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
           U="https://pk.khaadi.com/on/demandware.store/Sites-Khaadi_PK-Site/en_PK/Search-UpdateGrid?cgid=008-Sale&start=0&sz=24"
-          echo "== plain UA =="
-          curl -sS -m 40 -A "$UA" -o body.html -w "http=%{http_code} size=%{size_download}\n" "$U" || true
-          echo "data-pid count: $(grep -o 'data-pid=' body.html | wc -l)"
-          echo "first 400 chars:"; head -c 400 body.html; echo ""
+          echo "== response headers (no follow) =="
+          curl -sS -m 40 -A "$UA" -D - -o /dev/null "$U" 2>&1 | grep -iE "^HTTP|^location|^set-cookie|^server|^cf-|^x-" | head -20
           echo ""
-          echo "== full browser headers =="
-          curl -sS -m 40 -A "$UA" \
-            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-            -H "Accept-Language: en-US,en;q=0.9" \
-            -H "Referer: https://pk.khaadi.com/sale/" \
-            -H "X-Requested-With: XMLHttpRequest" \
-            -o body2.html -w "http=%{http_code} size=%{size_download}\n" "$U" || true
-          echo "data-pid count: $(grep -o 'data-pid=' body2.html | wc -l)"
+          echo "== homepage from datacenter =="
+          curl -sS -m 40 -A "$UA" -D - -o hp.html "https://pk.khaadi.com/" -w "\nhttp=%{http_code} size=%{size_download} final=%{url_effective}\n" 2>&1 | grep -iE "^HTTP|^location|http=|final=" | head -10
+          echo "homepage data-pid count: $(grep -o 'data-pid=' hp.html | wc -l)"
+          echo ""
+          echo "== follow redirects, where do we land =="
+          curl -sSL -m 40 -A "$UA" -o /dev/null -w "final=%{url_effective} http=%{http_code} size=%{size_download}\n" "$U" 2>&1 | tail -3
