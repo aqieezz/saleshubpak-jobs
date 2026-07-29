@@ -1,0 +1,23 @@
+name: Diag Khaadi
+on: { workflow_dispatch: {} }
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Khaadi sale grid from a datacenter IP
+        run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+          U="https://pk.khaadi.com/on/demandware.store/Sites-Khaadi_PK-Site/en_PK/Search-UpdateGrid?cgid=008-Sale&start=0&sz=24"
+          echo "== plain UA =="
+          curl -sS -m 40 -A "$UA" -o body.html -w "http=%{http_code} size=%{size_download}\n" "$U" || true
+          echo "data-pid count: $(grep -o 'data-pid=' body.html | wc -l)"
+          echo "first 400 chars:"; head -c 400 body.html; echo ""
+          echo ""
+          echo "== full browser headers =="
+          curl -sS -m 40 -A "$UA" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            -H "Accept-Language: en-US,en;q=0.9" \
+            -H "Referer: https://pk.khaadi.com/sale/" \
+            -H "X-Requested-With: XMLHttpRequest" \
+            -o body2.html -w "http=%{http_code} size=%{size_download}\n" "$U" || true
+          echo "data-pid count: $(grep -o 'data-pid=' body2.html | wc -l)"
