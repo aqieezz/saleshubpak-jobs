@@ -1,7 +1,11 @@
 name: Check API
 
-# Read-only smoke check from a GitHub IP. No `-e` abort: every probe must run
-# even when an earlier one times out, or one slow endpoint hides the rest.
+# Patient warm + smoke check from a GitHub IP.
+#
+# After a deploy the edge cache is empty, and if the origin is IO-starved the
+# first request per URL can take minutes. A short timeout gives up before the
+# response lands, so the cache never fills and the endpoint looks permanently
+# dead. Warm with a generous timeout FIRST, then measure.
 
 on:
   workflow_dispatch: {}
@@ -9,21 +13,34 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 30
     steps:
-      - name: Probe endpoints
+      - name: Warm (patient, fills the edge cache)
         shell: bash
         run: |
           set +e
           B=https://saleshubpak.vercel.app
-          for p in /api/health /api/stats /api/home /api/brands "/api/products/drops?days=14" /support /robots.txt; do
-            printf '%-34s -> ' "$p"
-            curl -s -o /tmp/body -w "%{http_code} %{time_total}s\n" --max-time 45 "$B$p"
+          for p in /api/health /api/stats /api/brands /api/categories /api/home \
+                   /api/products/trending "/api/products/drops?days=14" \
+                   "/api/products?sort=discount&onSale=true&page=1&pageSize=20" \
+                   "/api/products?sort=discount&gender=women&onSale=true&page=1&pageSize=20" \
+                   /home /deals /support; do
+            printf '%-62s -> ' "$p"
+            curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --max-time 300 "$B$p"
+          done
+          exit 0
+
+      - name: Measure (should all be cache hits now)
+        shell: bash
+        run: |
+          set +e
+          B=https://saleshubpak.vercel.app
+          for p in /api/health /api/stats /api/brands /api/home "/api/products/drops?days=14" /home /support; do
+            printf '%-40s -> ' "$p"
+            curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --max-time 90 "$B$p"
           done
           echo ""
           echo "--- drops body ---"
-          curl -s --max-time 45 "$B/api/products/drops?days=14" | head -c 600
+          curl -s --max-time 90 "$B/api/products/drops?days=14" | head -c 700
           echo ""
-          echo "--- live deploy ---"
-          curl -s --max-time 30 "$B/robots.txt" | head -1
           exit 0
