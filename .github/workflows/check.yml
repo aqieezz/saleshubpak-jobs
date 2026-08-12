@@ -1,8 +1,7 @@
 name: Check API
 
-# Read-only smoke check of the public API from a GitHub IP. Exists because the
-# developer's own IP is periodically held by Vercel's abuse checkpoint, which
-# makes a local curl return 000 and look like an outage when the site is fine.
+# Read-only smoke check from a GitHub IP. No `-e` abort: every probe must run
+# even when an earlier one times out, or one slow endpoint hides the rest.
 
 on:
   workflow_dispatch: {}
@@ -10,21 +9,21 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - name: Probe endpoints
+        shell: bash
         run: |
+          set +e
           B=https://saleshubpak.vercel.app
-          for p in /api/health /api/home /api/stats; do
-            printf '%-16s -> ' "$p"
-            curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --max-time 60 "$B$p"
+          for p in /api/health /api/stats /api/home /api/brands "/api/products/drops?days=14" /support /robots.txt; do
+            printf '%-34s -> ' "$p"
+            curl -s -o /tmp/body -w "%{http_code} %{time_total}s\n" --max-time 45 "$B$p"
           done
           echo ""
-          echo "--- /api/products/drops?days=14 ---"
-          curl -s --max-time 90 "$B/api/products/drops?days=14" | head -c 1500
+          echo "--- drops body ---"
+          curl -s --max-time 45 "$B/api/products/drops?days=14" | head -c 600
           echo ""
-          echo ""
-          echo "--- /support ---"
-          curl -s -o /dev/null -w "%{http_code}\n" --max-time 60 "$B/support"
-          echo "--- robots (which deploy is live) ---"
-          curl -s --max-time 60 "$B/robots.txt" | head -1
+          echo "--- live deploy ---"
+          curl -s --max-time 30 "$B/robots.txt" | head -1
+          exit 0
