@@ -1,0 +1,54 @@
+name: Ensure indexes
+
+# Creates any missing Postgres indexes WITHOUT running a full 30-minute scrape.
+#
+# Why this exists: the indexes only reach production from a machine holding the
+# production credentials, and until now that was solely the scrape job. That
+# made adding an index a 30-minute round trip, and a failure inside it was
+# invisible behind the scrape log. It also runs against DIRECT_URL rather than
+# the pooled connection, because DDL through a transaction-mode pooler is
+# unreliable.
+#
+# Required secrets: PRIVATE_REPO_TOKEN, DIRECT_URL
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ensure-indexes
+  cancel-in-progress: false
+
+jobs:
+  indexes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - name: Check out the private app repo
+        uses: actions/checkout@v4
+        with:
+          repository: aqieezz/saleshubpak
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+
+      - run: npx prisma generate
+
+      - name: Create missing indexes
+        # DIRECT_URL for BOTH: DDL wants a direct 5432 session, not the
+        # transaction-mode pooler.
+        run: npm run db:search-index
+        env:
+          DATABASE_URL: ${{ secrets.DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
