@@ -1,0 +1,37 @@
+name: DB unstick
+
+# Clears backends wedging the database. Report-only unless `kill` is true.
+on:
+  workflow_dispatch:
+    inputs:
+      kill:
+        description: "Terminate matching backends (otherwise report only)"
+        type: boolean
+        default: false
+
+jobs:
+  unstick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: aqieezz/saleshubpak
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Unstick
+        run: npx tsx src/scripts/db-unstick.ts ${{ inputs.kill && '--kill' || '' }}
+        env:
+          DATABASE_URL: ${{ secrets.DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
