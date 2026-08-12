@@ -52,3 +52,17 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DIRECT_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+      # Verify from a GitHub IP: the developer's own IP is intermittently held
+      # by Vercel's abuse checkpoint, so a local curl cannot confirm anything.
+      - name: Check the live drops feed
+        if: always()
+        working-directory: .
+        run: |
+          echo "--- /api/products/drops ---"
+          curl -s --max-time 90 "https://saleshubpak.vercel.app/api/products/drops?days=14" \
+            | head -c 1200
+          echo ""
+          echo "--- /api/health ---"
+          curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --max-time 60 \
+            "https://saleshubpak.vercel.app/api/health"
