@@ -1,0 +1,30 @@
+name: Check API
+
+# Read-only smoke check of the public API from a GitHub IP. Exists because the
+# developer's own IP is periodically held by Vercel's abuse checkpoint, which
+# makes a local curl return 000 and look like an outage when the site is fine.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe endpoints
+        run: |
+          B=https://saleshubpak.vercel.app
+          for p in /api/health /api/home /api/stats; do
+            printf '%-16s -> ' "$p"
+            curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --max-time 60 "$B$p"
+          done
+          echo ""
+          echo "--- /api/products/drops?days=14 ---"
+          curl -s --max-time 90 "$B/api/products/drops?days=14" | head -c 1500
+          echo ""
+          echo ""
+          echo "--- /support ---"
+          curl -s -o /dev/null -w "%{http_code}\n" --max-time 60 "$B/support"
+          echo "--- robots (which deploy is live) ---"
+          curl -s --max-time 60 "$B/robots.txt" | head -1
