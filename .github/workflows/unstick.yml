@@ -1,18 +1,27 @@
 name: DB unstick
 
-# Clears backends wedging the database. Report-only unless `kill` is true.
+# Maintenance for the production database.
+#   vacuum : VACUUM ANALYZE the big tables. The scraper rewrites ~137k rows per
+#            run, which leaves the visibility map stale and turns index-only
+#            scans into per-row heap fetches. This is the usual fix when the
+#            aggregate endpoints go slow while small ones stay fast.
+#   kill   : terminate orphaned/stuck backends. Report-only unless set.
 on:
   workflow_dispatch:
     inputs:
+      vacuum:
+        description: "VACUUM ANALYZE the big tables"
+        type: boolean
+        default: false
       kill:
-        description: "Terminate matching backends (otherwise report only)"
+        description: "Terminate stuck/orphaned backends"
         type: boolean
         default: false
 
 jobs:
   unstick:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: server
@@ -30,8 +39,15 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - run: npx prisma generate
-      - name: Unstick
-        run: npx tsx src/scripts/db-unstick.ts ${{ inputs.kill && '--kill' || '' }}
+      - name: Maintenance
         env:
           DATABASE_URL: ${{ secrets.DIRECT_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          DO_VACUUM: ${{ inputs.vacuum }}
+          DO_KILL: ${{ inputs.kill }}
+        run: |
+          ARGS=""
+          if [ "$DO_VACUUM" = "true" ]; then ARGS="$ARGS --vacuum"; fi
+          if [ "$DO_KILL" = "true" ]; then ARGS="$ARGS --kill"; fi
+          echo "running with:$ARGS"
+          npx tsx src/scripts/db-unstick.ts $ARGS
