@@ -26,11 +26,18 @@ on:
         description: "Terminate stuck/orphaned backends"
         type: boolean
         default: false
+      start_at:
+        description: "Wait until this UTC time (HH:MM, e.g. 22:00) before starting"
+        type: string
+        default: ""
 
 jobs:
   unstick:
     runs-on: ubuntu-latest
     timeout-minutes: 330
+    permissions:
+      contents: read
+      actions: read
     defaults:
       run:
         working-directory: server
@@ -48,6 +55,24 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - run: npx prisma generate
+      - name: Wait for the maintenance window
+        if: ${{ inputs.start_at != '' }}
+        working-directory: .
+        env:
+          START_AT: ${{ inputs.start_at }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          now=$(date -u +%s)
+          target=$(date -u -d "today $START_AT" +%s)
+          if [ "$target" -le "$now" ]; then echo "$START_AT UTC has passed; starting now"; target=$now; fi
+          echo "waiting $(( (target - now) / 60 )) min until $START_AT UTC"
+          sleep $(( target - now ))
+          # Never overlap a scrape: VACUUM FULL locks Product for its duration.
+          for i in $(seq 1 60); do
+            busy=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "Scrape brands" --json status --jq '[.[] | select(.status == "in_progress" or .status == "queued")] | length')
+            if [ "$busy" = "0" ]; then break; fi
+            echo "a scrape is running; waiting 2 min"; sleep 120
+          done
       - name: Maintenance
         env:
           DATABASE_URL: ${{ secrets.DIRECT_URL }}
