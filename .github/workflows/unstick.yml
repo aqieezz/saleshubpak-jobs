@@ -5,12 +5,21 @@ name: DB unstick
 #            run, which leaves the visibility map stale and turns index-only
 #            scans into per-row heap fetches. This is the usual fix when the
 #            aggregate endpoints go slow while small ones stay fast.
+#   full   : VACUUM FULL "Product". Rewrites the table compactly and returns
+#            the free space, which plain VACUUM never does. LOCKS Product for
+#            its whole duration (every product query waits), so quiet hours
+#            only, between scrapes. Added for the 2026-10-16 size crisis
+#            (482 of 500 MB on the free plan).
 #   kill   : terminate orphaned/stuck backends. Report-only unless set.
 on:
   workflow_dispatch:
     inputs:
       vacuum:
         description: "VACUUM ANALYZE the big tables"
+        type: boolean
+        default: false
+      full:
+        description: "VACUUM FULL Product (locks it; quiet hours only)"
         type: boolean
         default: false
       kill:
@@ -44,10 +53,12 @@ jobs:
           DATABASE_URL: ${{ secrets.DIRECT_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
           DO_VACUUM: ${{ inputs.vacuum }}
+          DO_FULL: ${{ inputs.full }}
           DO_KILL: ${{ inputs.kill }}
         run: |
           ARGS=""
           if [ "$DO_VACUUM" = "true" ]; then ARGS="$ARGS --vacuum"; fi
+          if [ "$DO_FULL" = "true" ]; then ARGS="$ARGS --full"; fi
           if [ "$DO_KILL" = "true" ]; then ARGS="$ARGS --kill"; fi
           echo "running with:$ARGS"
           npx tsx src/scripts/db-unstick.ts $ARGS
