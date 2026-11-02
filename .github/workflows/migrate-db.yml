@@ -1,0 +1,84 @@
+name: DB migrate to Contabo
+
+# One-off: copy the public schema (tables, data, indexes, sequences) from
+# Supabase (secrets.DIRECT_URL) to the new Contabo server (secrets.NEW_DIRECT_URL).
+# The target's public schema is REPLACED, so it can be re-run for a fresh copy.
+# Supabase is only read. Logs show counts and sizes, never connection details.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "copy" to replace the new server''s data with a fresh copy from Supabase'
+        type: string
+        required: true
+
+jobs:
+  migrate:
+    if: ${{ inputs.confirm == 'copy' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Postgres 17 client
+        run: |
+          sudo apt-get -qq install -y postgresql-common >/dev/null
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y >/dev/null
+          sudo apt-get -qq install -y postgresql-client-17 >/dev/null
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Wait for any running scrape
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 45); do
+            busy=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "Scrape brands" --json status --jq '[.[] | select(.status == "in_progress" or .status == "queued")] | length')
+            if [ "$busy" = "0" ]; then echo "no scrape running"; break; fi
+            echo "a scrape is running; waiting 2 min"; sleep 120
+          done
+
+      - name: Copy
+        env:
+          SRC_URL: ${{ secrets.DIRECT_URL }}
+          DST_URL: ${{ secrets.NEW_DIRECT_URL }}
+        run: |
+          set -euo pipefail
+          BIN=/usr/lib/postgresql/17/bin
+          # Prisma-only query parameters (pgbouncer, connection_limit, sslaccept)
+          # are not libpq options: strip them, then require TLS.
+          SRC="${SRC_URL%%\?*}?sslmode=require"
+          DST="${DST_URL%%\?*}?sslmode=require"
+          export PGOPTIONS="-c statement_timeout=0"
+
+          echo "source: $($BIN/psql "$SRC" -tAc 'SHOW server_version')  target: $($BIN/psql "$DST" -tAc 'SHOW server_version')"
+
+          t0=$(date +%s)
+          $BIN/pg_dump "$SRC" -Fc --schema=public --no-owner --no-privileges -f public.dump
+          echo "dump: $(du -h public.dump | cut -f1) in $(( $(date +%s) - t0 ))s"
+
+          # Skip what belongs to Supabase or already exists on the target.
+          $BIN/pg_restore -l public.dump \
+            | grep -v -E ' SCHEMA - public | COMMENT - SCHEMA public | POLICY | ROW SECURITY | PUBLICATION ' > restore.list
+
+          $BIN/psql "$DST" -v ON_ERROR_STOP=1 -q -c 'DROP SCHEMA IF EXISTS public CASCADE' -c 'CREATE SCHEMA public'
+
+          t1=$(date +%s)
+          set +e
+          $BIN/pg_restore -d "$DST" -L restore.list --no-owner --no-privileges -j 4 public.dump 2> restore.err
+          rc=$?
+          set -e
+          echo "restore exit $rc in $(( $(date +%s) - t1 ))s; $(grep -c 'error:' restore.err || true) error line(s)"
+          grep -E 'error:' restore.err | sed -E 's/(postgres(ql)?:\/\/)[^ ]*/\1***/g' | head -20 || true
+
+          $BIN/psql "$DST" -q -c 'ANALYZE'
+
+          echo; echo "row counts (source | target):"
+          for t in Brand Product PriceSnapshot Device ClickEvent; do
+            s=$($BIN/psql "$SRC" -tAc "SELECT count(*) FROM public.\"$t\"")
+            d=$($BIN/psql "$DST" -tAc "SELECT count(*) FROM public.\"$t\"")
+            flag=$([ "$s" = "$d" ] && echo ok || echo DIFF)
+            printf '  %-14s %10s | %-10s %s\n' "$t" "$s" "$d" "$flag"
+          done
+          echo; echo "target indexes: $($BIN/psql "$DST" -tAc "SELECT count(*) FROM pg_indexes WHERE schemaname='public'")  (source: $($BIN/psql "$SRC" -tAc "SELECT count(*) FROM pg_indexes WHERE schemaname='public'"))"
+          echo "target database size: $($BIN/psql "$DST" -tAc "SELECT pg_size_pretty(pg_database_size(current_database()))")"
