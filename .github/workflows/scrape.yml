@@ -7,8 +7,8 @@ name: Scrape brands
 # Required repository secrets:
 #   PRIVATE_REPO_TOKEN  fine-grained PAT, read-only Contents, scoped to the
 #                       private app repo only
-#   DATABASE_URL        Supabase pooled connection string
-#   DIRECT_URL          Supabase direct connection string
+#   DATABASE_URL        pooled connection string (PgBouncer on our own server since 2026-11-02)
+#   DIRECT_URL          direct connection string (same server, port 5432)
 # Optional:
 #   SCRAPE_PROXY_PREFIX geo-proxy prefix so Khaadi (which redirects US
 #                       datacenter IPs away) can be scraped via the API's
@@ -73,3 +73,5 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
           SCRAPE_PROXY_PREFIX: ${{ secrets.SCRAPE_PROXY_PREFIX }}
+          # The site's canonical address: the scrape pings IndexNow for these URLs.
+          PUBLIC_SITE_URL: https://saleshubpk.com
