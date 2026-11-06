@@ -75,3 +75,12 @@ jobs:
           SCRAPE_PROXY_PREFIX: ${{ secrets.SCRAPE_PROXY_PREFIX }}
           # The site's canonical address: the scrape pings IndexNow for these URLs.
           PUBLIC_SITE_URL: https://saleshubpk.com
+
+  # Re-check every price-history sentence against the records after each
+  # scrape (see check-prices.yml). Runs even when the scrape failed or timed
+  # out, because a partial scrape changes prices too.
+  check-price-sentences:
+    needs: scrape
+    if: ${{ always() }}
+    uses: ./.github/workflows/check-prices.yml
+    secrets: inherit

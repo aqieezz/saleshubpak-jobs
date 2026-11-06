@@ -1,0 +1,61 @@
+name: Check price sentences
+
+# Every product page on the site states one fact about the item's price
+# history (server/src/web/price-story.ts in the private app repo). This
+# re-checks every in-stock product's sentence against the raw price records,
+# read-only, with checks written independently of the code that picks the
+# sentence. Any false sentence fails the run, so it goes red and GitHub emails
+# the owner.
+#
+# Called by scrape.yml after every scrape; can also be run by hand (Actions >
+# Check price sentences > Run workflow), e.g. after a database repair.
+#
+# Uses the same repository secrets as scrape.yml (PRIVATE_REPO_TOKEN,
+# DIRECT_URL, DATABASE_URL). The database connection is read-only from its
+# start. This repo is public, so these logs are public: they show only counts,
+# brand keys, product ids and the public sentence text.
+
+on:
+  workflow_call: {}
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - name: Check out the private app repo
+        uses: actions/checkout@v4
+        with:
+          repository: aqieezz/saleshubpak
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+
+      - run: npx prisma generate
+
+      - name: Export price records (read-only)
+        run: npx tsx src/scripts/export-price-records.ts "$RUNNER_TEMP/price-records"
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Check every price sentence against the records
+        run: |
+          status=0
+          npx tsx src/scripts/validate-price-stories.ts "$RUNNER_TEMP/price-records" > "$RUNNER_TEMP/check.txt" || status=$?
+          cat "$RUNNER_TEMP/check.txt"
+          { echo '### Price-history sentences'; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
