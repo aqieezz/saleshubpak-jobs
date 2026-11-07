@@ -1,0 +1,84 @@
+name: Scrape fast-selling brands
+
+# Re-reads, every hour, the brands that take a product off their site the
+# moment it sells out. Its page then answers 404 and the shop sends our
+# visitor to its homepage, so between the full scrapes (scrape.yml, every
+# 12 hours) those "Shop at" links are dead. Measured 2026-11-07, 2h20m after
+# a full run: 41 Limelight, 3 Alkaram and 3 Outfitters links we listed as
+# live were dead. Brands that keep sold-out items on their site (Gul Ahmed,
+# Breakout, Cougar...) do not need this.
+#
+# Same code, secrets and rules as scrape.yml (coverage guard, hide-then-delete,
+# price records, notifications), for these brands only. It skips itself while
+# the full scrape is queued or running: that run covers these brands too, and
+# two runs writing the same brand at once is what this avoids. It has its own
+# concurrency group, because sharing scrape.yml's would let a queued hourly
+# run cancel a full scrape that is waiting its turn.
+
+on:
+  schedule:
+    - cron: "30 * * * *" # hourly, half past: clear of the full scrape's slot
+  workflow_dispatch: {}
+
+concurrency:
+  group: scrape-fast
+  cancel-in-progress: false
+
+permissions:
+  actions: read # to see whether the full scrape is running
+  contents: read
+
+env:
+  BRANDS: limelight,alkaram,outfitters
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - name: Skip while the full scrape is queued or running
+        id: gate
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          busy=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow scrape.yml --limit 5 \
+            --json status --jq '[.[] | select(.status != "completed")] | length')
+          echo "busy=$busy" >> "$GITHUB_OUTPUT"
+          if [ "$busy" != "0" ]; then echo "The full scrape is queued or running; it covers $BRANDS. Skipping."; fi
+
+      - name: Check out the private app repo
+        if: steps.gate.outputs.busy == '0'
+        uses: actions/checkout@v4
+        with:
+          repository: aqieezz/saleshubpak
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          # do not leave the token behind in .git/config on the runner
+          persist-credentials: false
+
+      - if: steps.gate.outputs.busy == '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - if: steps.gate.outputs.busy == '0'
+        run: npm ci
+
+      - if: steps.gate.outputs.busy == '0'
+        run: npx prisma generate
+
+      - name: Scrape ${{ env.BRANDS }}
+        if: steps.gate.outputs.busy == '0'
+        run: npm run scrape:one -- "$BRANDS"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          # The site's canonical address: the scrape pings IndexNow for these URLs.
+          PUBLIC_SITE_URL: https://saleshubpk.com
