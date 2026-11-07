@@ -13,7 +13,9 @@ name: Scrape brands
 #   SCRAPE_PROXY_PREFIX geo-proxy prefix so Khaadi (which redirects US
 #                       datacenter IPs away) can be scraped via the API's
 #                       Mumbai region. Value:
-#                       https://saleshubpk.vercel.app/api/fetch?secret=<CRON_SECRET>&url=
+#                       https://saleshubpak.vercel.app/api/fetch?secret=<FETCH_SECRET>&url=
+#                       FETCH_SECRET only opens that relay. Never put CRON_SECRET
+#                       here: this URL is written to Vercel's request logs.
 #
 # NOTE: this repo is public, which means these workflow LOGS are public.
 # GitHub automatically masks registered secret values in logs, which is why
