@@ -1,8 +1,21 @@
 name: Scrape brands
 
-# Runs the Sales Hub PK brand scrape. Lives in this PUBLIC repo because public
-# repositories get unlimited GitHub Actions minutes; the application code stays
-# in the private repo and is checked out read-only at run time.
+# Since 2026-11-10 the Sales Hub PK scrape runs on our own database server
+# (Contabo, Mumbai): /usr/local/bin/saleshub-scrape, cron in
+# /etc/cron.d/saleshub-scrape, full run at 00:00 and 12:00 UTC, hourly run for
+# the fast-selling brands. GitHub's schedules here fired hours late or not at
+# all, and the server sits next to the database and in the region the stores
+# serve.
+#
+# What still runs here on a schedule: the brands whose sites refuse the
+# server's address. Bareeze's host (AWS ELB) answers 403 to it and 200 to
+# GitHub's runners. The server's run skips the same list (GITHUB_BRANDS in
+# saleshub-scrape); keep the two in step.
+#
+# Backup: run this workflow by hand with brands=all to scrape everything from
+# here, e.g. while the server is down. Check first that the server's scrape is
+# not running (/var/log/saleshub-scrape/last-full.status), or two runs will
+# write the same brands at once.
 #
 # Required repository secrets:
 #   PRIVATE_REPO_TOKEN  fine-grained PAT, read-only Contents, scoped to the
@@ -12,7 +25,7 @@ name: Scrape brands
 # Optional:
 #   SCRAPE_PROXY_PREFIX geo-proxy prefix so Khaadi (which redirects US
 #                       datacenter IPs away) can be scraped via the API's
-#                       Mumbai region. Value:
+#                       Mumbai region. Only a brands=all run needs it. Value:
 #                       https://saleshubpak.vercel.app/api/fetch?secret=<FETCH_SECRET>&url=
 #                       FETCH_SECRET only opens that relay. Never put CRON_SECRET
 #                       here: this URL is written to Vercel's request logs.
@@ -23,12 +36,21 @@ name: Scrape brands
 
 on:
   schedule:
-    - cron: "0 */12 * * *" # twice a day; was every 8h, which cost ~1800 min/month
-  workflow_dispatch: {}
+    - cron: "0 */12 * * *" # twice a day, the brands the server cannot reach
+  workflow_dispatch:
+    inputs:
+      brands:
+        description: 'Brand keys, comma-separated, or "all" (backup for the server scrape)'
+        required: false
+        default: bareeze
 
 concurrency:
   group: scrape
   cancel-in-progress: false
+
+env:
+  # A scheduled run has no inputs, so it gets the default.
+  BRANDS: ${{ inputs.brands || 'bareeze' }}
 
 jobs:
   scrape:
@@ -50,7 +72,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: server/package-lock.json
 
@@ -58,19 +80,9 @@ jobs:
 
       - run: npx prisma generate
 
-      # Chromium is only needed for the two headless-scraped brands (Bareeze,
-      # Uniworth). Caching the browser binary saves a few minutes per run.
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('server/package-lock.json') }}
-
-      - name: Install Playwright chromium
-        run: npx playwright install --with-deps chromium
-
-      - name: Scrape
-        run: npm run scrape
+      - name: Scrape ${{ env.BRANDS }}
+        run: |
+          if [ "$BRANDS" = all ]; then npm run scrape; else npm run scrape:one -- "$BRANDS"; fi
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
@@ -78,11 +90,12 @@ jobs:
           # The site's canonical address: the scrape pings IndexNow for these URLs.
           PUBLIC_SITE_URL: https://saleshubpk.com
 
-  # Re-check every price-history sentence against the records after each
-  # scrape (see check-prices.yml). Runs even when the scrape failed or timed
-  # out, because a partial scrape changes prices too.
+  # Re-check every price-history sentence against the records after a full
+  # backup run (see check-prices.yml). The server's full run does this check
+  # itself, so the scheduled Bareeze-only runs skip it. Runs even when the
+  # scrape failed or timed out, because a partial scrape changes prices too.
   check-price-sentences:
     needs: scrape
-    if: ${{ always() }}
+    if: ${{ always() && inputs.brands == 'all' }}
     uses: ./.github/workflows/check-prices.yml
     secrets: inherit

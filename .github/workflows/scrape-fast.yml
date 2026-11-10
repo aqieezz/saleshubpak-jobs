@@ -15,19 +15,14 @@ name: Scrape fast-selling brands
 # concurrency group, because sharing scrape.yml's would let a queued hourly
 # run cancel a full scrape that is waiting its turn.
 #
-# Who starts it: GitHub's own schedule fired only ~10 of ~65 hourly slots from
-# 2026-11-07 to 2026-11-10. So since 2026-11-10 the database server (Contabo,
-# Mumbai) starts it every hour at :30 through workflow_dispatch: see
-# /usr/local/sbin/saleshub-dispatch-fast and /etc/cron.d/saleshub-dispatch-fast
-# there. Its token is a fine-grained GitHub token for this repo only, with
-# Actions read and write. The schedule below stays as a fallback, in case that
-# token expires. A scheduled run skips itself when a dispatched run started in
-# the last 50 minutes. Dispatched runs never skip for that reason, so the two
-# cannot cancel each other out.
+# MANUAL BACKUP ONLY since 2026-11-10. GitHub's schedule fired only ~10 of ~65
+# hourly slots from 2026-11-07 to 2026-11-10, so the hourly run moved to our
+# database server (Contabo, Mumbai): `saleshub-scrape fast` at :30 every hour,
+# /etc/cron.d/saleshub-scrape. Run this by hand only while the server cannot
+# scrape; the server's runs do not see GitHub's, so check first that its cron
+# is not about to run (/var/log/saleshub-scrape/last-fast.status).
 
 on:
-  schedule:
-    - cron: "30 * * * *" # hourly, half past: clear of the full scrape's slot
   workflow_dispatch: {}
 
 concurrency:
@@ -35,7 +30,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  actions: read # to see whether the full scrape is running, and recent dispatched runs
+  actions: read # to see whether a scrape.yml run is going
   contents: read
 
 env:
@@ -50,7 +45,7 @@ jobs:
         working-directory: server
 
     steps:
-      - name: Skip while the full scrape is queued or running, or the server already started this hour's run
+      - name: Skip while a scrape.yml run is queued or running
         id: gate
         working-directory: .
         env:
@@ -61,16 +56,7 @@ jobs:
             --json status --jq '[.[] | select(.status != "completed")] | length')
           if [ "$busy" != "0" ]; then
             skip=true
-            echo "The full scrape is queued or running; it covers $BRANDS. Skipping."
-          fi
-          if [ "$skip" = false ] && [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
-            since=$(date -u -d '50 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-            recent=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow scrape-fast.yml --event workflow_dispatch \
-              --limit 5 --json createdAt --jq "[.[] | select(.createdAt > \"$since\")] | length")
-            if [ "$recent" != "0" ]; then
-              skip=true
-              echo "A dispatched run (the database server's hourly trigger) started after $since. Skipping."
-            fi
+            echo "A scrape.yml run is queued or running (a brands=all run covers $BRANDS). Skipping."
           fi
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
 
