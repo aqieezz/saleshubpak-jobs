@@ -45,7 +45,9 @@ jobs:
         working-directory: server
 
     steps:
-      - name: Skip while a scrape.yml run is queued or running
+      # Scheduled scrape.yml runs scrape only Bareeze, so only a manual one
+      # (which may be brands=all) counts as busy.
+      - name: Skip while a manual scrape.yml run is queued or running
         id: gate
         working-directory: .
         env:
@@ -53,7 +55,7 @@ jobs:
         run: |
           skip=false
           busy=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow scrape.yml --limit 5 \
-            --json status --jq '[.[] | select(.status != "completed")] | length')
+            --json status,event --jq '[.[] | select(.status != "completed" and .event != "schedule")] | length')
           if [ "$busy" != "0" ]; then
             skip=true
             echo "A scrape.yml run is queued or running (a brands=all run covers $BRANDS). Skipping."
