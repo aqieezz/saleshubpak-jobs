@@ -14,6 +14,16 @@ name: Scrape fast-selling brands
 # two runs writing the same brand at once is what this avoids. It has its own
 # concurrency group, because sharing scrape.yml's would let a queued hourly
 # run cancel a full scrape that is waiting its turn.
+#
+# Who starts it: GitHub's own schedule fired only ~10 of ~65 hourly slots from
+# 2026-11-07 to 2026-11-10. So since 2026-11-10 the database server (Contabo,
+# Mumbai) starts it every hour at :30 through workflow_dispatch: see
+# /usr/local/sbin/saleshub-dispatch-fast and /etc/cron.d/saleshub-dispatch-fast
+# there. Its token is a fine-grained GitHub token for this repo only, with
+# Actions read and write. The schedule below stays as a fallback, in case that
+# token expires. A scheduled run skips itself when a dispatched run started in
+# the last 50 minutes. Dispatched runs never skip for that reason, so the two
+# cannot cancel each other out.
 
 on:
   schedule:
@@ -25,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  actions: read # to see whether the full scrape is running
+  actions: read # to see whether the full scrape is running, and recent dispatched runs
   contents: read
 
 env:
@@ -40,19 +50,32 @@ jobs:
         working-directory: server
 
     steps:
-      - name: Skip while the full scrape is queued or running
+      - name: Skip while the full scrape is queued or running, or the server already started this hour's run
         id: gate
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          skip=false
           busy=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow scrape.yml --limit 5 \
             --json status --jq '[.[] | select(.status != "completed")] | length')
-          echo "busy=$busy" >> "$GITHUB_OUTPUT"
-          if [ "$busy" != "0" ]; then echo "The full scrape is queued or running; it covers $BRANDS. Skipping."; fi
+          if [ "$busy" != "0" ]; then
+            skip=true
+            echo "The full scrape is queued or running; it covers $BRANDS. Skipping."
+          fi
+          if [ "$skip" = false ] && [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            since=$(date -u -d '50 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+            recent=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow scrape-fast.yml --event workflow_dispatch \
+              --limit 5 --json createdAt --jq "[.[] | select(.createdAt > \"$since\")] | length")
+            if [ "$recent" != "0" ]; then
+              skip=true
+              echo "A dispatched run (the database server's hourly trigger) started after $since. Skipping."
+            fi
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
 
       - name: Check out the private app repo
-        if: steps.gate.outputs.busy == '0'
+        if: steps.gate.outputs.skip == 'false'
         uses: actions/checkout@v4
         with:
           repository: aqieezz/saleshubpak
@@ -61,21 +84,21 @@ jobs:
           # do not leave the token behind in .git/config on the runner
           persist-credentials: false
 
-      - if: steps.gate.outputs.busy == '0'
+      - if: steps.gate.outputs.skip == 'false'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: server/package-lock.json
 
-      - if: steps.gate.outputs.busy == '0'
+      - if: steps.gate.outputs.skip == 'false'
         run: npm ci
 
-      - if: steps.gate.outputs.busy == '0'
+      - if: steps.gate.outputs.skip == 'false'
         run: npx prisma generate
 
       - name: Scrape ${{ env.BRANDS }}
-        if: steps.gate.outputs.busy == '0'
+        if: steps.gate.outputs.skip == 'false'
         run: npm run scrape:one -- "$BRANDS"
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
