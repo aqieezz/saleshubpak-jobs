@@ -80,9 +80,17 @@ jobs:
 
       - run: npx prisma generate
 
+      # A brand that fails (FAIL in the summary) fails the job, so GitHub emails
+      # the owner: a SALE DROP already exits 1, a FAIL alone does not. Rang Ja
+      # fails every run (it blocks feed reads) and is left out.
       - name: Scrape ${{ env.BRANDS }}
         run: |
-          if [ "$BRANDS" = all ]; then npm run scrape; else npm run scrape:one -- "$BRANDS"; fi
+          set -o pipefail
+          if [ "$BRANDS" = all ]; then npm run scrape; else npm run scrape:one -- "$BRANDS"; fi 2>&1 | tee "$RUNNER_TEMP/scrape.log"
+          if grep -E '^\[[^]]*\] FAIL ' "$RUNNER_TEMP/scrape.log" | grep -vqE '\] FAIL +Rang Ja '; then
+            echo "::error::a brand failed: see the SCRAPE SUMMARY above"
+            exit 1
+          fi
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}

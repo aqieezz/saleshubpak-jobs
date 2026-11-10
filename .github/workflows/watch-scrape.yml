@@ -21,14 +21,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: The newest brand scrape is under 6 hours old
+      # Two checks on the brands the SERVER scrapes (Bareeze is scraped here,
+      # by scrape.yml, so it would make a stopped server look alive):
+      #   any server run (the hourly fast run included): newest under 6h old
+      #   the full run alone (leave out the fast brands too): newest under
+      #     14h old; full runs finish about 12h20m apart
+      # The query string skips the CDN copy of /api/brands (s-maxage 30 min,
+      # stale-while-revalidate a week), which would otherwise show data as old
+      # as this check's own previous request.
+      - name: The server's scrapes are recent
         run: |
-          json=$(curl -fsS --retry 3 --retry-delay 10 --max-time 30 https://saleshubpak.vercel.app/api/brands)
-          newest=$(echo "$json" | jq -r '[(if type == "array" then . else (.items // .brands) end)[] | .lastScrapedAt // empty] | max')
-          if [ -z "$newest" ] || [ "$newest" = null ]; then echo "::error::/api/brands gave no lastScrapedAt"; exit 1; fi
-          age=$(( $(date -u +%s) - $(date -u -d "$newest" +%s) ))
-          echo "Newest brand scrape: $newest ($((age / 60)) min ago)"
-          if [ "$age" -gt 21600 ]; then
-            echo "::error::No brand scraped for $((age / 3600))h. Check the database server: /var/log/saleshub-scrape/ and /etc/cron.d/saleshub-scrape."
-            exit 1
-          fi
+          json=$(curl -fsS --retry 3 --retry-delay 10 --max-time 30 \
+            "https://saleshubpak.vercel.app/api/brands?watch=$(date +%s)")
+          newest() {
+            echo "$json" | jq -r --argjson skip "$1" '
+              [(if type == "array" then . else (.items // .brands) end)[]
+               | select(.key as $k | $skip | index($k) | not)
+               | .lastScrapedAt // empty] | max'
+          }
+          fail=0
+          check() { # label newest max_seconds
+            if [ -z "$2" ] || [ "$2" = null ]; then echo "::error::$1: /api/brands gave no lastScrapedAt"; fail=1; return; fi
+            age=$(( $(date -u +%s) - $(date -u -d "$2" +%s) ))
+            echo "$1: newest $2 ($((age / 60)) min ago, limit $(($3 / 3600))h)"
+            if [ "$age" -gt "$3" ]; then
+              echo "::error::$1: nothing for $((age / 3600))h. Check the database server: /var/log/saleshub-scrape/ and /etc/cron.d/saleshub-scrape."
+              fail=1
+            fi
+          }
+          check "Any server scrape" "$(newest '["bareeze"]')" 21600
+          check "Full server scrape" "$(newest '["bareeze","limelight","alkaram","outfitters"]')" 50400
+          exit $fail

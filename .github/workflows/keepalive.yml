@@ -1,0 +1,44 @@
+name: Keep schedules alive
+
+# GitHub disables every scheduled workflow in a PUBLIC repo after 60 days with
+# no repository activity, and scheduled runs do not count as activity. Since
+# 2026-11-10 the scrape runs on our server and this repo changes rarely, so the
+# Bareeze scrape (scrape.yml), the watcher (watch-scrape.yml) and the warm ping
+# (warm.yml) would stop without a word. Weekly, this makes an empty commit when
+# the last commit is 30+ days old (a commit is activity), and switches the
+# scheduled workflows back on in case one was disabled anyway.
+
+on:
+  schedule:
+    - cron: "23 6 * * 1" # Mondays; GitHub may skip some, weekly leaves room
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # the empty commit
+  actions: write # re-enabling workflows
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Commit when the repo has been quiet for 30 days
+        run: |
+          days=$(( ($(date +%s) - $(git log -1 --format=%ct)) / 86400 ))
+          echo "Last commit: $days days ago"
+          if [ "$days" -ge 30 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "keepalive: keep scheduled workflows enabled ($days days without a commit)"
+            git push
+          fi
+
+      - name: Make sure the scheduled workflows are on
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for w in scrape.yml watch-scrape.yml warm.yml keepalive.yml; do
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$w/enable" && echo "on: $w"
+          done
