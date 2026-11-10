@@ -1,0 +1,34 @@
+name: Watch the server scrape
+
+# Since 2026-11-10 the brand scrape runs on our database server, not here (see
+# scrape.yml). If it stops (server down, cron broken), nothing on the server
+# can raise the alarm, so this checks from outside: it fails, and GitHub emails
+# the owner, when no brand has been scraped for 6 hours. The hourly fast run
+# normally keeps the newest lastScrapedAt under an hour old. A failing API
+# fails it too. GitHub's schedule is loose (it can fire hours late), which is
+# fine for this. Failures of a run that did happen go to the owner's phone
+# from the server itself (ntfy, see /usr/local/bin/saleshub-scrape).
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: The newest brand scrape is under 6 hours old
+        run: |
+          json=$(curl -fsS --retry 3 --retry-delay 10 --max-time 30 https://saleshubpak.vercel.app/api/brands)
+          newest=$(echo "$json" | jq -r '[(if type == "array" then . else (.items // .brands) end)[] | .lastScrapedAt // empty] | max')
+          if [ -z "$newest" ] || [ "$newest" = null ]; then echo "::error::/api/brands gave no lastScrapedAt"; exit 1; fi
+          age=$(( $(date -u +%s) - $(date -u -d "$newest" +%s) ))
+          echo "Newest brand scrape: $newest ($((age / 60)) min ago)"
+          if [ "$age" -gt 21600 ]; then
+            echo "::error::No brand scraped for $((age / 3600))h. Check the database server: /var/log/saleshub-scrape/ and /etc/cron.d/saleshub-scrape."
+            exit 1
+          fi
