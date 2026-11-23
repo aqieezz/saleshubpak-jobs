@@ -19,7 +19,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          B=https://saleshubpak.vercel.app
+          B=https://saleshubpk.com
           for p in /api/health /api/stats /api/brands /api/categories /api/home \
                    /api/products/trending "/api/products/drops?days=14" \
                    "/api/products?sort=discount&onSale=true&page=1&pageSize=20" \
@@ -34,7 +34,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          B=https://saleshubpak.vercel.app
+          B=https://saleshubpk.com
           for p in /api/health /api/stats /api/brands /api/home "/api/products/drops?days=14" /home /support; do
             printf '%-40s -> ' "$p"
             curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --max-time 90 "$B$p"

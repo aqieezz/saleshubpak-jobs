@@ -60,9 +60,9 @@ jobs:
         working-directory: .
         run: |
           echo "--- /api/products/drops ---"
-          curl -s --max-time 90 "https://saleshubpak.vercel.app/api/products/drops?days=14" \
+          curl -s --max-time 90 "https://saleshubpk.com/api/products/drops?days=14" \
             | head -c 1200
           echo ""
           echo "--- /api/health ---"
           curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --max-time 60 \
-            "https://saleshubpak.vercel.app/api/health"
+            "https://saleshubpk.com/api/health"

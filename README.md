@@ -1,6 +1,6 @@
 # saleshubpak-jobs
 
-Scheduled jobs for [Sales Hub PK](https://saleshubpak.vercel.app), a deal
+Scheduled jobs for [Sales Hub PK](https://saleshubpk.com), a deal
 discovery app for Pakistani fashion brands.
 
 This repository contains only automation:

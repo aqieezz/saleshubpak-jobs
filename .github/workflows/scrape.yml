@@ -26,7 +26,7 @@ name: Scrape brands
 #   SCRAPE_PROXY_PREFIX geo-proxy prefix so Khaadi (which redirects US
 #                       datacenter IPs away) can be scraped via the API's
 #                       Mumbai region. Only a brands=all run needs it. Value:
-#                       https://saleshubpak.vercel.app/api/fetch?secret=<FETCH_SECRET>&url=
+#                       https://saleshubpk.com/api/fetch?secret=<FETCH_SECRET>&url=
 #                       FETCH_SECRET only opens that relay. Never put CRON_SECRET
 #                       here: this URL is written to Vercel's request logs.
 #
